@@ -1,0 +1,17 @@
+# 忽略 node_modules 文件夹
+node_modules/
+
+# 忽略 .git 文件夹
+.git/
+
+# 忽略 .idea 文件夹
+.idea/
+
+dist/
+
+# 忽略 npmignore 文件
+.npmignore
+
+.DS_Store
+
+.env

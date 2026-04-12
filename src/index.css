@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100%;
+    min-height: 100dvh;
+    font-family: "PingFang SC", "Microsoft YaHei", Inter, system-ui, sans-serif;
+  }
+
+  #root {
+    min-height: 100%;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@layer components {
+  .piano {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    /* 高度由 layoutPianoKeys 按白键高度写入，避免 flex 拉伸在键盘下方留出大块空白 */
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
+  }
+
+  .key {
+    position: absolute;
+    user-select: none;
+    border-radius: 0 0 5px 5px;
+    cursor: pointer;
+    transition: transform 0.04s ease, box-shadow 0.08s ease, filter 0.08s ease;
+  }
+
+  .key:active {
+    transform: translateY(2px);
+  }
+
+  .white {
+    width: 26px;
+    height: 228px;
+    background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 38%, #e2e8f0 72%, #cbd5e1 100%);
+    border: 1px solid #94a3b8;
+    border-top: none;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      inset 0 -6px 12px rgba(148, 163, 184, 0.25),
+      0 3px 6px rgba(15, 23, 42, 0.35),
+      0 1px 0 rgba(15, 23, 42, 0.2);
+    color: #0f172a;
+  }
+
+  .white.active {
+    background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 45%, #93c5fd 100%);
+    box-shadow:
+      inset 0 2px 8px rgba(59, 130, 246, 0.35),
+      0 0 0 1px rgba(56, 189, 248, 0.5),
+      0 0 14px rgba(34, 211, 238, 0.35);
+    border-color: #38bdf8;
+  }
+
+  .black {
+    width: 16px;
+    height: 140px;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 40%, #020617 100%);
+    border: 1px solid #020617;
+    border-top: none;
+    box-shadow:
+      inset 0 2px 4px rgba(255, 255, 255, 0.12),
+      inset 0 -8px 16px rgba(0, 0, 0, 0.55),
+      0 4px 8px rgba(0, 0, 0, 0.65),
+      0 1px 0 rgba(255, 255, 255, 0.06);
+    color: #e0f2fe;
+    z-index: 2;
+  }
+
+  .black.active {
+    background: linear-gradient(180deg, #334155 0%, #1e40af 55%, #172554 100%);
+    box-shadow:
+      inset 0 2px 6px rgba(96, 165, 250, 0.4),
+      0 0 0 1px rgba(56, 189, 248, 0.45),
+      0 0 12px rgba(34, 211, 238, 0.4);
+    border-color: #0ea5e9;
+  }
+
+  .key-label {
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    transform: translateX(-50%);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    text-shadow:
+      0 0 8px rgba(255, 255, 255, 0.9),
+      0 0 2px rgba(255, 255, 255, 1),
+      0 1px 2px rgba(15, 23, 42, 0.5);
+  }
+
+  .white .key-label {
+    color: #0c1222;
+    opacity: 1;
+  }
+
+  .black .key-label {
+    color: #f0f9ff;
+    text-shadow:
+      0 0 10px rgba(56, 189, 248, 0.95),
+      0 0 4px rgba(0, 0, 0, 0.9),
+      0 1px 2px rgba(0, 0, 0, 1);
+  }
+
+  /* 启动页：迷你键盘条，与 .white / .black 琴键气质一致 */
+  @keyframes boot-loader-key {
+    0%,
+    100% {
+      transform: translateY(0) scaleY(1);
+      box-shadow:
+        0 4px 10px rgba(15, 23, 42, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.88);
+      filter: brightness(1);
+    }
+    35% {
+      transform: translateY(4px) scaleY(0.94);
+      box-shadow:
+        0 1px 6px rgba(34, 211, 238, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.95);
+      filter: brightness(1.06);
+    }
+    50% {
+      transform: translateY(0) scaleY(1);
+      box-shadow:
+        0 0 18px rgba(34, 211, 238, 0.4),
+        0 4px 12px rgba(15, 23, 42, 0.4);
+      filter: brightness(1.1);
+    }
+  }
+
+  @keyframes boot-loader-roll {
+    0% {
+      transform: translateX(-65%);
+      opacity: 0.15;
+    }
+    40% {
+      opacity: 0.55;
+    }
+    100% {
+      transform: translateX(65%);
+      opacity: 0.15;
+    }
+  }
+
+  .boot-loader-key {
+    animation: boot-loader-key 1.5s ease-in-out infinite;
+  }
+
+  .boot-loader-roll-shine {
+    animation: boot-loader-roll 2.4s ease-in-out infinite;
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "piano",
+  "homepage": "https://stephenwong1991.github.io/piano",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "generate-favicon": "node scripts/generate-favicon.mjs",
+    "build-sample-sprite": "node scripts/build-sample-sprite.mjs",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist && node scripts/cleanup-github-history.mjs"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.8.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^3.5.0",
+    "tone": "^14.8.49"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/node": "^24.5.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.27",
+    "gh-pages": "^6.3.0",
+    "png-to-ico": "^3.0.1",
+    "pngjs": "^7.0.0",
+    "postcss": "^8.5.9",
+    "tailwindcss": "^4.2.2",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.9.2",
+    "vite": "^5.4.10"
+  }
+}
