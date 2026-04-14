@@ -87,7 +87,7 @@ export function toImportedMidiTitle(fileName: string) {
 const midiNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 
 /** 内置 MIDI 展示顺序（文件名小写，与 glob 解析一致） */
-const BUILTIN_SCORE_ORDER = ["summer.mid", "十一月的肖邦.mid", "富士山下.mid"];
+const BUILTIN_SCORE_ORDER = ["summer.mid", "麦芽糖.mid", "富士山下.mid"];
 
 function builtinScoreRank(fileNameLower: string): number {
   const i = BUILTIN_SCORE_ORDER.indexOf(fileNameLower);
