@@ -232,7 +232,10 @@ function App() {
           </CardContent>
         </Card>
 
-        <section className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-cyan-500/35 bg-[#020617] p-1 shadow-[0_0_0_1px_rgba(34,211,238,0.12),inset_0_1px_0_rgba(255,255,255,0.06)] sm:p-1.5">
+        <section className="flex shrink-0 flex-col gap-1 overflow-hidden rounded-xl border border-cyan-500/35 bg-[#020617] p-1 shadow-[0_0_0_1px_rgba(34,211,238,0.12),inset_0_1px_0_rgba(255,255,255,0.06)] sm:p-1.5">
+          <p className="shrink-0 px-0.5 text-[10px] leading-tight text-cyan-200/70 sm:px-1">
+            按住空格：延音踏板（松键后仍可保持余音；松踏板时对已抬键的音释放）
+          </p>
           <div ref={pianoDom.piano} id="piano" className="piano w-full" aria-label="88键钢琴" />
         </section>
       </div>
@@ -367,6 +370,10 @@ function App() {
   "tempo": 96,
   "events": [
     { "beat": 0, "duration": 1, "note": "C4" }
+  ],
+  "sustainPedalEvents": [
+    { "beat": 0, "down": true },
+    { "beat": 2, "down": false }
   ]
 }`}
                 </pre>

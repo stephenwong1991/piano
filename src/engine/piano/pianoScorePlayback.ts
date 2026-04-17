@@ -6,7 +6,14 @@ export interface ScorePlaybackHost {
   getTempoScaleFactor(): number;
   setStatus(text: string): void;
   setEngineBadge(text: string): void;
-  startNote(midi: number, source: VoiceSource, durationSeconds: number | null, velocity: number): void;
+  startNote(
+    midi: number,
+    source: VoiceSource,
+    durationSeconds: number | null,
+    velocity: number,
+    /** 键位亮灯秒数（谱面时值）；见 PianoAudio.startNote */
+    scoreKeyHighlightSeconds?: number | null
+  ): void;
   stopAllNotes(): void;
   drawProgressCanvas(): void;
   updatePauseButtonState(): void;
@@ -75,11 +82,24 @@ export class ScorePlayback {
       const overlapBeat = this.playbackStartBeat - event.beat;
       const remainingBeat = event.duration - Math.max(0, overlapBeat);
       if (remainingBeat <= 0) return;
+      const visBeats = event.durationVisual ?? event.duration;
+      const remainingVisualBeat = visBeats - Math.max(0, overlapBeat);
       const startMs = Math.max(0, event.beat - this.playbackStartBeat) * secPerBeat * 1000;
       const durSec = remainingBeat * secPerBeat;
+      let scoreKeyHighlightSeconds: number | undefined;
+      if (remainingVisualBeat <= 0) {
+        scoreKeyHighlightSeconds = 0;
+      } else {
+        const kSec = remainingVisualBeat * secPerBeat;
+        if (event.durationVisual != null && durSec > kSec + 1e-5) {
+          scoreKeyHighlightSeconds = kSec;
+        }
+      }
       const timer = window.setTimeout(() => {
         if (!this.isPlayingScore) return;
-        event.midiList.forEach((midi) => host.startNote(midi, "score", durSec, event.velocity || 100));
+        event.midiList.forEach((midi) =>
+          host.startNote(midi, "score", durSec, event.velocity || 100, scoreKeyHighlightSeconds)
+        );
       }, startMs);
       this.stopTimers.push(timer);
     });

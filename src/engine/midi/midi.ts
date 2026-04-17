@@ -13,11 +13,21 @@ export interface ParsedMidi {
   notes: ParsedNote[];
   /** MThd 中的轨道段数量（含仅元数据的轨） */
   headerTrackCount: number;
+  /**
+   * 全曲合并后的 CC64（延音踏板）时间线，beat = tick / ticksPerBeat（与音符同一绝对时间轴）。
+   * 同一 tick 多条取最后一条。
+   */
+  sustainPedalTimeline?: { beat: number; down: boolean }[];
 }
 
 export interface ScoreEvent {
   beat: number;
+  /** 实际播放时值（含踏板延长后的结束时间） */
   duration: number;
+  /**
+   * 卷帘可视化用的音符「键长」（通常为踏板前的原时值；未设置时与 duration 相同）
+   */
+  durationVisual?: number;
   midiList: number[];
   velocity?: number;
   /** 源自 MIDI 的轨道索引，用于多轨着色；JSON 导入可无此字段 */
@@ -28,6 +38,8 @@ export interface PlayableScore {
   title: string;
   tempo: number;
   events: ScoreEvent[];
+  /** 与 events 同一拍坐标系下的 CC64 踏板（可选，用于展示或再导出） */
+  sustainPedalEvents?: { beat: number; down: boolean }[];
   /** 本曲谱事件里出现的不同 MIDI 轨道数（有音符的轨） */
   midiTracksDetected?: number;
   /** 文件头中的 MTrk 数量 */
@@ -91,6 +103,7 @@ export function parseMidi(arrayBuffer: ArrayBuffer): ParsedMidi {
   const ticksPerBeat = division;
   let firstTempoBpm = 120;
   const notes: ParsedNote[] = [];
+  const sustainPedalRaw: { tick: number; down: boolean }[] = [];
 
   for (let trackIndex = 0; trackIndex < trackCount; trackIndex += 1) {
     const id = bytesToText(view, offset, 4);
@@ -145,6 +158,13 @@ export function parseMidi(arrayBuffer: ArrayBuffer): ParsedMidi {
       const data2 = hasTwoBytes ? view.getUint8(offset) : 0;
       if (hasTwoBytes) offset += 1;
 
+      if (eventType === 0xb0 && data1 === 64) {
+        if (channel !== 9) {
+          sustainPedalRaw.push({ tick, down: data2 >= 64 });
+        }
+        continue;
+      }
+
       if (eventType === 0x90 && data2 > 0) {
         noteOnMap.set(`${channel}:${data1}`, { tick, channel, pitch: data1, velocity: data2 });
       } else if (eventType === 0x80 || (eventType === 0x90 && data2 === 0)) {
@@ -166,7 +186,70 @@ export function parseMidi(arrayBuffer: ArrayBuffer): ParsedMidi {
     }
     offset = end;
   }
-  return { tempo: firstTempoBpm, notes, headerTrackCount: trackCount };
+
+  sustainPedalRaw.sort((a, b) => a.tick - b.tick);
+  const sustainPedalMerged: { tick: number; down: boolean }[] = [];
+  for (const e of sustainPedalRaw) {
+    if (sustainPedalMerged.length && sustainPedalMerged[sustainPedalMerged.length - 1].tick === e.tick) {
+      sustainPedalMerged[sustainPedalMerged.length - 1] = e;
+    } else {
+      sustainPedalMerged.push(e);
+    }
+  }
+  const sustainPedalTimeline =
+    sustainPedalMerged.length > 0
+      ? sustainPedalMerged.map((e) => ({ beat: e.tick / ticksPerBeat, down: e.down }))
+      : undefined;
+
+  return { tempo: firstTempoBpm, notes, headerTrackCount: trackCount, sustainPedalTimeline };
+}
+
+/** 在 noteEnd 处若踏板仍为踩下，则把「松开」时刻推迟到其后第一次踏板松开 */
+function extendNoteEndBeat(
+  noteEndBeat: number,
+  sustainTimeline: { beat: number; down: boolean }[],
+  songEnd: number
+): number {
+  if (sustainTimeline.length === 0) return noteEndBeat;
+  let on = false;
+  for (const e of sustainTimeline) {
+    if (e.beat > noteEndBeat) break;
+    on = e.down;
+  }
+  if (!on) return noteEndBeat;
+  for (const e of sustainTimeline) {
+    if (e.beat > noteEndBeat && !e.down) {
+      return e.beat;
+    }
+  }
+  return songEnd;
+}
+
+function applySustainToScoreEvents<T extends ScoreEvent>(
+  events: T[],
+  sustainTimeline: { beat: number; down: boolean }[]
+): T[] {
+  if (sustainTimeline.length === 0) {
+    return events.map((e) => ({
+      ...e,
+      durationVisual: e.durationVisual ?? e.duration
+    })) as T[];
+  }
+  const songEnd = Math.max(
+    0,
+    ...events.map((e) => e.beat + (e.durationVisual ?? e.duration)),
+    ...sustainTimeline.map((p) => p.beat)
+  );
+  return events.map((e) => {
+    const fingerDur = e.durationVisual ?? e.duration;
+    const end = e.beat + fingerDur;
+    const ext = extendNoteEndBeat(end, sustainTimeline, songEnd);
+    return {
+      ...e,
+      durationVisual: fingerDur,
+      duration: Number(Math.max(0.125, ext - e.beat).toFixed(4))
+    };
+  }) as T[];
 }
 
 export function midiToScore(parsed: ParsedMidi, title: string, mode: "melody" | "raw", minMidi: number, maxMidi: number): PlayableScore {
@@ -176,15 +259,25 @@ export function midiToScore(parsed: ParsedMidi, title: string, mode: "melody" | 
     .sort((a, b) => a.startBeat - b.startBeat);
   const melodyNotes = extractTopLineMelody(filteredNotes);
   const notes = mode === "raw" ? filteredNotes : melodyNotes.length > 0 ? melodyNotes : filteredNotes;
-  const firstBeat = notes.length > 0 ? notes[0].startBeat : 0;
+  const rawPedal = parsed.sustainPedalTimeline ?? [];
+  const minPedal = rawPedal.length ? Math.min(...rawPedal.map((p) => p.beat)) : Infinity;
+  const firstBeat = Math.min(notes.length > 0 ? notes[0].startBeat : Infinity, minPedal);
+  const fb = Number.isFinite(firstBeat) ? firstBeat : 0;
 
-  const events = notes.map((n) => ({
-    beat: Number(Math.max(0, n.startBeat - firstBeat).toFixed(4)),
+  const relPedal = rawPedal.map((p) => ({ beat: p.beat - fb, down: p.down }));
+
+  let events = notes.map((n) => ({
+    beat: Number(Math.max(0, n.startBeat - fb).toFixed(4)),
     duration: Number(Math.max(0.125, n.durationBeat).toFixed(4)),
     midiList: [n.pitch],
     velocity: Number.isFinite(Number(n.velocity)) ? Number(n.velocity) : 100,
     trackIndex: n.trackIndex
   }));
+
+  /** 先锁定谱面时值，再烘焙延音；避免无 durationVisual 时 UI 误用延长后的 duration */
+  events = events.map((e) => ({ ...e, durationVisual: e.duration }));
+
+  events = applySustainToScoreEvents(events, relPedal);
 
   const trackIdxSet = new Set(events.map((e) => e.trackIndex).filter((t): t is number => typeof t === "number"));
 
@@ -192,6 +285,7 @@ export function midiToScore(parsed: ParsedMidi, title: string, mode: "melody" | 
     title,
     tempo: parsed.tempo,
     events,
+    ...(relPedal.length ? { sustainPedalEvents: relPedal } : {}),
     midiTracksDetected: trackIdxSet.size,
     midiHeaderTrackCount: parsed.headerTrackCount
   };
@@ -207,7 +301,18 @@ export function normalizeScore(raw: unknown, noteNameToMidi: (note: string) => n
   }
   const tempo = Number(score.tempo) > 0 ? Number(score.tempo) : 90;
   const title = score.title ? String(score.title) : "导入曲谱";
-  const events = score.events.map((event: Record<string, any>, idx: number) => {
+  let pedalFromJson: { beat: number; down: boolean }[] = [];
+  if (Array.isArray(score.sustainPedalEvents)) {
+    pedalFromJson = score.sustainPedalEvents
+      .map((row: Record<string, unknown>) => ({
+        beat: Number(row.beat),
+        down: Boolean(row.down)
+      }))
+      .filter((p) => Number.isFinite(p.beat));
+    pedalFromJson.sort((a, b) => a.beat - b.beat);
+  }
+
+  let events = score.events.map((event: Record<string, any>, idx: number) => {
     const beat = Number.isFinite(Number(event.beat)) ? Number(event.beat) : idx;
     const duration = Number(event.duration);
     if (!(duration > 0)) {
@@ -226,7 +331,16 @@ export function normalizeScore(raw: unknown, noteNameToMidi: (note: string) => n
     return { beat, duration, midiList };
   });
 
-  return { title, tempo, events };
+  events = events.map((e) => ({ ...e, durationVisual: e.duration }));
+
+  events = applySustainToScoreEvents(events, pedalFromJson);
+
+  return {
+    title,
+    tempo,
+    events,
+    ...(pedalFromJson.length ? { sustainPedalEvents: pedalFromJson } : {})
+  };
 }
 
 export function toPlayableScore(score: any, noteNameToMidi: (note: string) => number | null): PlayableScore {

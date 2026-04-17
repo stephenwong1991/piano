@@ -121,12 +121,22 @@ export class PianoApp {
     setKeyActive(this.keyElements, midi, active);
   }
 
-  private startNote(midi: number, source: VoiceSource = "manual", durationSeconds: number | null = null, velocity = 100) {
-    this.audio.startNote(midi, source, durationSeconds, velocity, (m, a) => this.activateKey(m, a));
+  private startNote(
+    midi: number,
+    source: VoiceSource = "manual",
+    durationSeconds: number | null = null,
+    velocity = 100,
+    scoreKeyHighlightSeconds?: number | null
+  ) {
+    this.audio.startNote(midi, source, durationSeconds, velocity, (m, a) => this.activateKey(m, a), scoreKeyHighlightSeconds);
   }
 
   private stopNote(midi: number, source: VoiceSource = "manual", expectedVoiceId: number | null = null) {
     this.audio.stopNote(midi, source, expectedVoiceId, (m, a) => this.activateKey(m, a));
+  }
+
+  private physicalKeyUp(midi: number, source: "manual" | "pointer") {
+    this.audio.physicalKeyUp(midi, source, (m, a) => this.activateKey(m, a));
   }
 
   private stopAllNotes() {
@@ -143,7 +153,7 @@ export class PianoApp {
 
   private handlePianoPointerUp(midi: number) {
     this.pointerPressEpoch.set(midi, (this.pointerPressEpoch.get(midi) ?? 0) + 1);
-    this.stopNote(midi, "pointer");
+    this.physicalKeyUp(midi, "pointer");
   }
 
   private getSelectedScore() {
@@ -416,6 +426,13 @@ export class PianoApp {
   }
 
   private onKeyDown(event: KeyboardEvent) {
+    if (event.code === "Space") {
+      event.preventDefault();
+      if (event.repeat) return;
+      void this.audio.primeAudioEngines();
+      this.audio.setSustainPedal(true);
+      return;
+    }
     if (event.repeat) return;
     if (event.code === "BracketLeft") {
       this.keyboardBaseMidi = Math.max(MIN_MIDI, this.keyboardBaseMidi - 12);
@@ -444,17 +461,29 @@ export class PianoApp {
   }
 
   private onKeyUp(event: KeyboardEvent) {
+    if (event.code === "Space") {
+      event.preventDefault();
+      this.audio.setSustainPedal(false, (m, a) => this.activateKey(m, a));
+      return;
+    }
     const offset = KEYBOARD_MAP.get(event.code);
     if (typeof offset !== "number") return;
     const midi = this.keyboardBaseMidi + offset;
     this.pressedKeyCodes.delete(event.code);
-    this.stopNote(midi, "manual");
+    this.physicalKeyUp(midi, "manual");
   }
 
   private setupEvents() {
     const sig = { signal: this.domEventsAbort.signal };
     window.addEventListener("keydown", this.onKeyDownBound, sig);
     window.addEventListener("keyup", this.onKeyUpBound, sig);
+    window.addEventListener(
+      "blur",
+      () => {
+        this.audio.setSustainPedal(false, (m, a) => this.activateKey(m, a));
+      },
+      sig
+    );
 
     this.dom.volume.addEventListener("input", () => {
       this.masterVolume = Number(this.dom.volume.value) / 100;
@@ -638,7 +667,7 @@ export class PianoApp {
       getTempoScaleFactor: () => Number(this.dom.tempoScale.value) / 100,
       setStatus: (text) => this.setStatus(text),
       setEngineBadge: (text) => this.setEngineBadge(text),
-      startNote: (midi, source, dur, vel) => this.startNote(midi, source, dur, vel),
+      startNote: (midi, source, dur, vel, keyH) => this.startNote(midi, source, dur, vel, keyH),
       stopAllNotes: () => this.stopAllNotes(),
       drawProgressCanvas: () => this.drawProgressCanvas(),
       updatePauseButtonState: () => this.updatePauseButtonState(),

@@ -124,8 +124,60 @@ export class PianoAudio {
   samplePianoEnabled = false;
   private readonly activeVoices = new Map<number, ActiveVoice>();
   private voiceIdCounter = 1;
+  /** 键盘/鼠标仍按住的音（与延音踏板配合：抬键后若踏板踩着则不触发 release） */
+  private readonly physicalKeysDown = new Set<number>();
+  private sustainPedalDown = false;
+  /** 每个 MIDI 键上待触发的 note-off 定时器（须与 stopAllNotes / 替换声部时一并清理，避免琴键状态错乱） */
+  private readonly noteOffTimers = new Map<number, number>();
+  /** 曲谱键位提前熄灭（与延音尾发声）用，与 note-off 独立 */
+  private readonly keyHighlightTimers = new Map<number, number>();
 
   constructor(private getMasterVolume: () => number) {}
+
+  private clearKeyHighlightTimer(midi: number) {
+    const tid = this.keyHighlightTimers.get(midi);
+    if (tid !== undefined) {
+      window.clearTimeout(tid);
+      this.keyHighlightTimers.delete(midi);
+    }
+  }
+
+  /** 谱面「离键」时刻只关键位 UI，声音仍按延音继续 */
+  private scheduleScoreKeyHighlightOff(
+    midi: number,
+    delaySec: number,
+    onActivateKey: (midi: number, active: boolean) => void
+  ) {
+    this.clearKeyHighlightTimer(midi);
+    const tid = window.setTimeout(() => {
+      this.keyHighlightTimers.delete(midi);
+      onActivateKey(midi, false);
+    }, Math.max(0, delaySec * 1000));
+    this.keyHighlightTimers.set(midi, tid);
+  }
+
+  private clearNoteOffTimer(midi: number) {
+    const tid = this.noteOffTimers.get(midi);
+    if (tid !== undefined) {
+      window.clearTimeout(tid);
+      this.noteOffTimers.delete(midi);
+    }
+  }
+
+  private scheduleNoteOff(
+    midi: number,
+    source: VoiceSource,
+    voiceId: number,
+    durationSeconds: number,
+    onActivateKey: (midi: number, active: boolean) => void
+  ) {
+    this.clearNoteOffTimer(midi);
+    const tid = window.setTimeout(() => {
+      this.noteOffTimers.delete(midi);
+      this.stopNote(midi, source, voiceId, onActivateKey);
+    }, Math.max(0, durationSeconds * 1000));
+    this.noteOffTimers.set(midi, tid);
+  }
 
   private setupAudioChain() {
     if (!this.audioContext) return;
@@ -229,7 +281,7 @@ export class PianoAudio {
 
                 const sampler = new window.Tone.Sampler({
                   urls: buffers,
-                  release: 1.4,
+                  release: 2.2,
                   onload: () => {
                     sampler.toDestination();
                     this.toneSampler = sampler;
@@ -312,7 +364,9 @@ export class PianoAudio {
     source: VoiceSource = "manual",
     durationSeconds: number | null = null,
     velocity = 100,
-    onActivateKey: (midi: number, active: boolean) => void
+    onActivateKey: (midi: number, active: boolean) => void,
+    /** 曲谱专用：键位亮灯时长（谱面「未延音」的剩余秒数）。`0` = 仅发声不亮键；不传则与整段发声同长（无踏板延长时） */
+    scoreKeyHighlightSeconds?: number | null
   ) {
     if (midi < MIN_MIDI || midi > MAX_MIDI) {
       return;
@@ -321,25 +375,56 @@ export class PianoAudio {
     const audioContext = this.audioContext!;
 
     const existing = this.activeVoices.get(midi);
-    if (existing && source !== "score") {
-      return;
+    if (existing) {
+      if (source === "score") {
+        if (existing.source === "score") {
+          this.releaseVoice(existing);
+          this.activeVoices.delete(midi);
+        } else {
+          return;
+        }
+      } else if (existing.source === "score") {
+        return;
+      } else {
+        this.releaseVoice(existing);
+        this.activeVoices.delete(midi);
+      }
     }
-    if (existing && source === "score") {
-      this.releaseVoice(existing);
-      this.activeVoices.delete(midi);
-    }
+
+    this.clearNoteOffTimer(midi);
+    this.clearKeyHighlightTimer(midi);
 
     const now = audioContext.currentTime;
     const velocityNorm = Math.min(1, Math.max(0.15, Number(velocity) / 127));
+    const suppressScoreKeyOn = source === "score" && scoreKeyHighlightSeconds === 0;
+    const earlyKeyOffSec =
+      source === "score" &&
+      !suppressScoreKeyOn &&
+      typeof scoreKeyHighlightSeconds === "number" &&
+      scoreKeyHighlightSeconds > 0 &&
+      durationSeconds != null &&
+      durationSeconds > 0 &&
+      scoreKeyHighlightSeconds < durationSeconds - 1e-6
+        ? scoreKeyHighlightSeconds
+        : null;
+
     if (this.samplePianoEnabled && this.toneSampler) {
       const noteName = midiToNoteName(midi);
       try {
         this.toneSampler.triggerAttack(noteName, window.Tone.now(), velocityNorm);
         const voiceId = this.voiceIdCounter++;
         this.activeVoices.set(midi, { id: voiceId, source, stopped: false, engine: "sample", noteName });
-        onActivateKey(midi, true);
+        if (source === "manual" || source === "pointer") {
+          this.physicalKeysDown.add(midi);
+        }
+        if (!suppressScoreKeyOn) {
+          onActivateKey(midi, true);
+        }
         if (durationSeconds && durationSeconds > 0) {
-          window.setTimeout(() => this.stopNote(midi, source, voiceId, onActivateKey), durationSeconds * 1000);
+          this.scheduleNoteOff(midi, source, voiceId, durationSeconds, onActivateKey);
+        }
+        if (earlyKeyOffSec != null) {
+          this.scheduleScoreKeyHighlightOff(midi, earlyKeyOffSec, onActivateKey);
         }
         return;
       } catch (_) {
@@ -405,27 +490,82 @@ export class PianoAudio {
     sendGain.connect(this.wetGainNode!);
     const voiceId = this.voiceIdCounter++;
     this.activeVoices.set(midi, { id: voiceId, gain, oscillators, source, stopped: false, releaseSeconds });
-    onActivateKey(midi, true);
+    if (source === "manual" || source === "pointer") {
+      this.physicalKeysDown.add(midi);
+    }
+    if (!suppressScoreKeyOn) {
+      onActivateKey(midi, true);
+    }
 
     if (durationSeconds && durationSeconds > 0) {
-      window.setTimeout(() => this.stopNote(midi, source, voiceId, onActivateKey), durationSeconds * 1000);
+      this.scheduleNoteOff(midi, source, voiceId, durationSeconds, onActivateKey);
+    }
+    if (earlyKeyOffSec != null) {
+      this.scheduleScoreKeyHighlightOff(midi, earlyKeyOffSec, onActivateKey);
     }
   }
 
   stopNote(midi: number, source: VoiceSource = "manual", expectedVoiceId: number | null = null, onActivateKey?: (midi: number, active: boolean) => void) {
     const voice = this.activeVoices.get(midi);
     if (!voice) {
+      this.clearNoteOffTimer(midi);
+      this.clearKeyHighlightTimer(midi);
       if (onActivateKey) onActivateKey(midi, false);
       return;
     }
     if (expectedVoiceId !== null && voice.id !== expectedVoiceId) return;
     if (source === "manual" && voice.source === "score") return;
+    this.clearNoteOffTimer(midi);
+    this.clearKeyHighlightTimer(midi);
     this.releaseVoice(voice);
     this.activeVoices.delete(midi);
     if (onActivateKey) onActivateKey(midi, false);
   }
 
+  /**
+   * 手指/鼠标抬键：琴键视觉立即熄灭；若延音踏板踩着则声音继续，直到松踏板。
+   */
+  physicalKeyUp(midi: number, source: "manual" | "pointer", onKeyVisual: (midi: number, active: boolean) => void) {
+    this.physicalKeysDown.delete(midi);
+    onKeyVisual(midi, false);
+    if (this.sustainPedalDown) {
+      return;
+    }
+    this.stopNote(midi, source, null, undefined);
+  }
+
+  /**
+   * 延音踏板（右踏板）：踩下时抬键不截断余音；松开时对所有「已抬键」的手动声部执行 release。
+   */
+  setSustainPedal(down: boolean, onReleaseVoices?: (midi: number, active: boolean) => void) {
+    const wasDown = this.sustainPedalDown;
+    this.sustainPedalDown = down;
+    if (wasDown && !down && onReleaseVoices) {
+      const toRelease: number[] = [];
+      for (const [midi, voice] of this.activeVoices) {
+        if (voice.source !== "manual" && voice.source !== "pointer") continue;
+        if (this.physicalKeysDown.has(midi)) continue;
+        toRelease.push(midi);
+      }
+      for (const midi of toRelease) {
+        const voice = this.activeVoices.get(midi);
+        if (!voice) continue;
+        this.stopNote(midi, voice.source, null, onReleaseVoices);
+      }
+    }
+  }
+
   stopAllNotes(onActivateKey: (midi: number, active: boolean) => void) {
+    for (const tid of this.noteOffTimers.values()) {
+      window.clearTimeout(tid);
+    }
+    this.noteOffTimers.clear();
+    for (const tid of this.keyHighlightTimers.values()) {
+      window.clearTimeout(tid);
+    }
+    this.keyHighlightTimers.clear();
+    this.physicalKeysDown.clear();
+    this.sustainPedalDown = false;
     const playing = Array.from(this.activeVoices.entries());
     playing.forEach(([midi, voice]) => {
       this.releaseVoice(voice);

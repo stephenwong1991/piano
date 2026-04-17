@@ -1,4 +1,4 @@
-import type { PlayableScore } from "@/engine/midi/midi";
+import type { PlayableScore, ScoreEvent } from "@/engine/midi/midi";
 import { MAX_MIDI, MIN_MIDI } from "@/engine/piano/constants";
 import {
   PIANO_ROLL_BOTTOM_PAD,
@@ -21,6 +21,13 @@ const TRACK_NOTE_RGB: Array<[number, number, number]> = [
   [248, 113, 113],
   [147, 197, 253]
 ];
+
+/**
+ * 卷帘条长 = 谱面时值（未踏板延长的部分）；延音只体现在音频，不拉长卷帘条
+ */
+function scoreEventDisplayDurationBeats(e: ScoreEvent): number {
+  return e.durationVisual ?? e.duration;
+}
 
 function noteFillForTrack(trackIndex: number | undefined, velAlpha: number) {
   const i = (trackIndex ?? 0) % TRACK_NOTE_RGB.length;
@@ -239,10 +246,11 @@ export function drawPianoRollFrame(deps: PianoRollDrawDeps): PianoRollDrawResult
       const pRange = Math.max(12, pMax - pMin);
 
       trackEvents.forEach((event) => {
-        if (event.beat > view.endBeat || event.beat + event.duration < view.startBeat) return;
+        const visDur = scoreEventDisplayDurationBeats(event);
+        if (event.beat > view.endBeat || event.beat + visDur < view.startBeat) return;
         const midi = event.midiList && event.midiList[0] ? event.midiList[0] : 60;
         const x = left + ((event.beat - view.startBeat) / view.spanBeat) * drawWidth;
-        const w = Math.max(1.5, event.duration / beatsPerPixel);
+        const w = Math.max(1.5, visDur / beatsPerPixel);
         const clampedX = Math.max(left, x);
         const maxW = left + drawWidth - clampedX;
         if (maxW <= 0) return;
@@ -274,10 +282,11 @@ export function drawPianoRollFrame(deps: PianoRollDrawDeps): PianoRollDrawResult
     ctx.fillText("低", 10, drawBottom - 8);
 
     viewScore.events.forEach((event) => {
-      if (event.beat > view.endBeat || event.beat + event.duration < view.startBeat) return;
+      const visDur = scoreEventDisplayDurationBeats(event);
+      if (event.beat > view.endBeat || event.beat + visDur < view.startBeat) return;
       const midi = event.midiList && event.midiList[0] ? event.midiList[0] : 60;
       const x = left + ((event.beat - view.startBeat) / view.spanBeat) * drawWidth;
-      const w = Math.max(1.5, event.duration / beatsPerPixel);
+      const w = Math.max(1.5, visDur / beatsPerPixel);
       const clampedX = Math.max(left, x);
       const maxW = left + drawWidth - clampedX;
       if (maxW <= 0) return;
